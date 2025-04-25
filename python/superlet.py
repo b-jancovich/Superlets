@@ -33,6 +33,31 @@ def computeWaveletSize(fc, nc, fs):
     return int(2 * np.floor(np.round(sd * fs * MORLET_SD_SPREAD) / 2) + 1)
 
 
+    
+def computeLongestWaveletSize(fs, foi, c1, ord):
+    """
+    Estimates the size of the longest wavelet.
+    """
+    # make order parameter
+    if len(ord) == 1:
+        ord = (ord, ord)
+    orders = np.linspace(start=ord[0], stop=ord[1], num=len(foi))
+
+    # create wavelets
+    max = 0
+    for iFreq in range(len(foi)):
+        centerFreq  = foi[iFreq]
+        nWavelets   = int(np.ceil(orders[iFreq]))
+
+        for iWave in range(nWavelets):
+            # create morlet wavelet
+            wlen = computeWaveletSize(centerFreq, fs, (iWave + 1) * c1)
+            if wlen > max:
+                max = wlen
+
+    return max
+
+
 def gausswin(size, alpha):
     """
     Create a Gaussian window.
@@ -40,7 +65,7 @@ def gausswin(size, alpha):
     halfSize    = int(np.floor(size / 2))
     idiv        = alpha / halfSize
 
-    t = (np.array(range(size), dtype=np.float64) - halfSize) * idiv
+    t = (np.arange(size, dtype=np.float64) - halfSize) * idiv
     window = np.exp(-(t * t) * 0.5)
     
     return window
@@ -61,7 +86,7 @@ def morlet(fc, nc, fs):
     igsum   = 1 / gauss.sum()
     ifs     = 1 / fs
 
-    t = (np.array(range(size), dtype=np.float64) - half) * ifs
+    t = (np.arange(size, dtype=np.float64) - half) * ifs
     wavelet = gauss * np.exp(2 * np.pi * fc * t * 1j) * igsum
 
     return wavelet
@@ -95,7 +120,7 @@ class SuperletTransform:
             frequencyBins: number of frequency bins to sample in the interval frequencyRange
             baseCycles: number of cycles of the smallest wavelet (c1 in the paper)
             superletOrders: a tuple containing the range of superlet orders, linearly distributed along frequencyRange
-            frequencies: specific list of frequencies - can be provided in stead of frequencyRange (it is ignored in this case)
+            frequencies: specific list of frequencies - can be provided instead of frequencyRange (it is ignored in this case)
         """
         # clear to reinit
         self.clear()
@@ -144,6 +169,28 @@ class SuperletTransform:
         self.frequencies = None
         self.orders      = None
 
+    def longestWaveletSize(self):
+        """
+        Return the size of the longest wavelet.
+        """
+        max = 0
+        for s in self.superlets:
+            for w in s:
+                if w.shape[0] > max:
+                    max = w.shape[0]
+        return max
+
+    def validTimeRegion(self):
+        """
+        Compute the start and end of the valid spectrum region.
+        Returns:    
+            start: the start of the valid time region
+            end: the end of the valid time region
+        """
+        pad     = self.longestWaveletSize() // 2
+        start   = self.inputSize + pad
+        end     = self.inputSize - pad
+        return start, end
 
     
     def transform(self, inputData):
@@ -221,6 +268,18 @@ class SuperletTransform:
                 accumulator[iFreq, :] += (2 * np.abs(fftconvolve(inputData, self.superlets[iFreq][0], "same")) ** 2).astype(np.float64)
 
 
+def cropSpectrum(spectrum, paddingSize):
+    """
+    Remove paddingSize samples at both ends of the spectrum.
+    Arguments:
+        spectrum: a 2D numpy array
+        paddingSize: number of samples to remove - equals to longestWaveletSize() / 2 of the computing SuperletTransform object
+    Returns:
+        the spectrum with the padding removed
+    """
+    return spectrum[:, paddingSize:(spectrum.shape[1] - paddingSize)]
+
+
 # main superlet function
 def superlets(data,
               fs,
@@ -258,3 +317,4 @@ def superlets(data,
     faslt.clear()
 
     return result
+
